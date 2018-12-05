@@ -1,6 +1,6 @@
 # MSP430-Lock
 
-*      Description *:     
+      *Description*:     
                         This program in assembly first begins with the blinking
                         on and off of the decimal point. The purupose of this is
                         to represent a locked state. To unlock the device the user
