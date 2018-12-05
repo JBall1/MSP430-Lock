@@ -1,0 +1,365 @@
+;-------------------------------------------------------------------------------
+;       Description:     This program in assembly first begins with the blinking
+;                        on and off of the decimal point. The purupose of this is
+;                        to represent a locked state. To unlock the device the user
+;                        must input 2231. Once the user inputs a 2, the decimal
+;                        will stop blinking. As the next correct digit is entered
+;                        the code will step through, waiting for the next correct
+;                        digit. If a incorrect digit is entered in such a way to 
+;                        where the pattern can not be 2231, such as 22231, the 
+;                        device will go back to the blinking of the decimal, waiting
+;                        for the correct code once again. Once the correct code
+;                        sequence is entered the device will blink a 'E'. To relock
+;                        the device, press the button on the bottom left hand side.
+;
+;
+;       Written by:     Joshua Ball
+;       Date:           3/08/2018
+;       Company:        Texas Tech University
+;       Adapted from:   DemoWith_1_digitExpansionBdRevised.s43 by Dr. Michael Helm
+;       Target Device:  Texas Instruments MSP430G2553 with the
+;                       custom  1 digit expansion Display Board installed
+;       Assembler/IDE:  IAR Embedded Workbench 6.50.1 Kickstart version
+;       HW I/O assignments:
+;
+;       P1.0    (output) LED1 LaunchPad bd (active high)
+;       P1.1    (input)  pushbutton (top) (active low) expansion bd 
+;       P1.2    (input)  pushbutton (second from top) (active low) expansion bd 
+;       P1.3    (input)  pushbutton on LaunchPad bd (active low)
+;       P1.4    (input) pushbutton (third from top) (active low) expansion bd
+;       P1.5    (input) pushbutton (bottom) (active low) expansion bd 
+;       P1.6    (output) LED2 LaunchPad bd (active high)  
+;       P1.7    (not used)  
+;
+;       P2.0    (output) Segment A (active high) drives display board
+;       P2.1    (output) Segment B (active high) drives display board
+;       P2.2    (output) Segment C (active high) drives display board
+;       P2.3    (output) Segment D (active high) drives display board
+;       P2.4    (output) Segment E (active high) drives display board
+;       P2.5    (output) Segment F (active high) drives display board
+;       P2.6    (output) Segment G (active high) drives display board
+;       P2.7    (output) Segment DP (active high) drives display board
+;
+;
+;
+;*******************************************************************************
+#include  "msp430g2553.h"
+;-------------------------------------------------------------------------------
+; Definition of Constants
+;-------------------------------------------------------------------------------
+
+LONG_DELAY      EQU     65535  ; max 16 bit value (FFFFh)
+;LONG_DELAY      EQU     600  ; max 16 bit value (FFFFh)
+SHORT_DELAY   EQU     5000  ; 
+PUSHBUTTON    EQU     %00001000 
+
+SEG_A         EQU     %00000001 ; Port pin position P2.0
+SEG_B         EQU     %00000010 ; Port pin position P2.1
+SEG_C         EQU     %00000100 ; Port pin position P2.2
+SEG_D         EQU     %00001000 ; Port pin position P2.3
+SEG_E         EQU     %00010000 ; Port pin position P2.4
+SEG_F         EQU     %00100000 ; Port pin position P2.5
+SEG_G         EQU     %01000000 ; Port pin position P2.6
+SEG_DP        EQU     %10000000 ; Port pin position P2.7
+
+
+PB_0         EQU     %00000010 ; Port pin position P1.1
+PB_1         EQU     %00000100 ; Port pin position P1.2   
+PB_2         EQU     %00010000 ; Port pin position P1.4   
+PB_3         EQU     %00100000 ; Port pin position P1.5
+PB_LPBD      EQU     %00001000 ; Port pin position P1.3 (on LaunchPad bd)
+
+
+
+SEG_PORT         EQU     P2OUT
+PB_PORT          EQU     P1IN
+
+
+ONE             EQU     %00000110
+TWO             EQU     %01011011
+THREE           EQU     %01001111
+FOUR            EQU     %01100110
+FIVE            EQU     %01101101
+SIX             EQU     %01111100
+SEVEN           EQU     %00000111
+EIGHT           EQU     %01111111
+NINE            EQU     %01100111
+ZERO            EQU     %00111111
+POINT           EQU     %10000000 ;aka decimal point
+
+E               EQU     %01111001
+D               EQU     %00111111
+c               EQU     %00111001
+A               EQU     %01110111
+B               EQU     %01111111
+F               EQU     %01110001
+
+;-------------------------------------------------------------------------------
+; Definition of Variables
+;-------------------------------------------------------------------------------
+
+                ORG   0x0200     ; beginning of RAM space (necessary statement)
+
+; no variables used in this simple example
+
+;-------------------------------------------------------------------------------
+            ORG     0xC000                  ;Program Reset (prog memory start)
+                                            ;this is Program memory start 
+                                            ;address for MSP430G2553 (16K)
+;-------------------------------------------------------------------------------
+RESET       mov.w   #0x0400,SP        ;Initialize stackpointer(to end of RAM +1)
+                                      ;RAM is 512 bytes, last position is 3FFh
+                                       
+                                     
+StopWDT    mov.w    #WDTPW+WDTHOLD,&WDTCTL  ; Stop WDT
+
+SetupP1        
+        
+           mov.b    #PB_LPBD, &P1REN    ;turn on the internal resistor
+           mov.b    #PB_LPBD, &P1OUT    ;set the resistor to Pullup mode
+           
+SetupP2               
+           mov.b   #0xFF, &P2DIR ; all as outputs to drive 7-seg LED 
+                                                            
+           bic.b    #0xC0, &P2SEL   ; Clears the P2SEL bits so that 
+                                        ; P2.6 and P2.7 function as GPIO pins
+                                        
+           mov.b    #0xBE, &P1REN    ;turn on the internal resistor for PB's
+           mov.b    #0xBE, &P1OUT    ; set the resistors to Pullup mode                                        
+          
+           
+           ; turn off all the segments 
+           clr.b  &SEG_PORT
+ 
+
+
+
+Mainloop        
+            cmp.b   #%10111010, &PB_PORT
+            jeq     Digit_Two_Correct      ; check the state of P1.3
+            jne     ButtonNotPressed  ;(match) pin was HIGH (button NOT pressed)
+           
+ButtonPressed
+            jmp     Done
+            
+ButtonNotPressed 
+            call    #Blink_Decimal
+            jmp     Done
+           
+Done        
+            clr.b  &SEG_PORT
+            jmp     Mainloop            
+
+      
+
+
+;-------------------------------------------------------------------------------
+;           End of main code
+;-------------------------------------------------------------------------------                                            
+                                           
+;-------------------------------------------------------------------------------
+;           Subroutines
+;------------------------------------------------------------------------------- 
+
+;-------------------------------------------------------------------------------
+; Blink_Decimal
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - Blinks the decimal point on/off for .5 second
+;  uses: Display 2.0
+;-------------------------------------------------------------------------------
+Blink_Decimal
+        call #Delay_Long
+        mov.b #POINT, &SEG_PORT
+        call #Delay_Long
+        clr.b  &SEG_PORT
+        ret
+;-------------------------------------------------------------------------------
+;  end of Blink_Decimal
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Blink_E
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - Blinks the decimal point on/off for .5 second
+;  uses: Display 2.0
+;-------------------------------------------------------------------------------
+Blink_E
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        clr.b  &SEG_PORT
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        call #Delay_Long
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        call #Delay_Long
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        mov.b #E, &SEG_PORT
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        call #Delay_Long
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        clr.b  &SEG_PORT
+        bit.b   #PUSHBUTTON, &P1IN
+        jz Mainloop
+        jmp Blink_E
+        ret
+;-------------------------------------------------------------------------------
+;  end of Blink_Decimal
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Sequence_3
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - The checking of buttons and the 'unlocking' of the device
+;
+;  uses: Display 2.0
+;-------------------------------------------------------------------------------
+//2231
+Sequence_3 
+
+            //checks for the push of button2
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Two_Correct       ; P1.0 and P1.6 will read as ZEROs since
+                                  ; they are connected to LEDs and pulled LOW
+
+      
+
+  
+//checks for the push of button2, if another button is pressed the device relocks
+Digit_Two_Correct          
+            //this ones the right one
+                   //button2
+           call #Delay_Long
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Three_Correct 
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Three_Correct 
+           call #Delay_Long
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Three_Correct 
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Three_Correct 
+           //wrong ones..
+                   //button1
+           cmp.b #%10111100, &PB_PORT
+           jeq   Finished
+           //button3
+           cmp.b #%10101110, &PB_PORT
+           jeq  Finished   
+           //button4
+           cmp.b #%10011110, &PB_PORT 
+           jeq Finished
+           
+           clr.b  &SEG_PORT
+           jmp Digit_Two_Correct  
+           
+//checks for the push of button3, if another button is pressed the device relocks  
+Digit_Three_Correct          
+            //right one
+           call #Delay_Long
+           cmp.b #%10101110, &PB_PORT
+           jeq  Digit_Four_Correct   
+           
+           cmp.b #%10101110, &PB_PORT
+           jeq  Digit_Four_Correct  
+           call #Delay_Long
+           cmp.b #%10101110, &PB_PORT
+           jeq  Digit_Four_Correct  
+           
+           //wrong cases
+           //button1
+           cmp.b #%10111100, &PB_PORT
+           jeq   Finished 
+           //button2
+           cmp.b #%10111010, &PB_PORT
+           jeq   Digit_Three_Correct 
+          //button4
+           cmp.b #%10011110, &PB_PORT 
+           jeq Finished
+           
+           
+           clr.b  &SEG_PORT
+           jmp Digit_Three_Correct    
+           
+//checks for the push of button1, if another button is pressed the device relocks           
+Digit_Four_Correct        
+           //button1 
+           call #Delay_Long
+           cmp.b #%10111100, &PB_PORT
+           jeq   Blink_E
+           
+           cmp.b #%10111100, &PB_PORT
+           jeq   Blink_E
+           call #Delay_Long
+           cmp.b #%10111100, &PB_PORT
+           jeq   Blink_E
+           
+           cmp.b #%10111100, &PB_PORT
+           jeq   Blink_E
+           ;Wrong cases..
+           //button2
+           cmp.b #%10111010, &PB_PORT
+           jeq Finished
+           //button3
+           cmp.b #%10101110, &PB_PORT
+           jeq  Finished   
+           //button4
+           cmp.b #%10011110, &PB_PORT 
+           jeq Finished
+           
+           clr.b  &SEG_PORT
+           jmp Digit_Four_Correct                       
+ 
+           
+Finished:  
+           ; turn off all the segments to clear results of last PB press
+           call #Blink_Decimal
+           
+        
+           
+
+;-------------------------------------------------------------------------------
+;  end of Sequence_3
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+; Delay_Long
+;  passed in - nothing
+;  returned - nothing
+;  accomplishes - long delay
+;  uses: R15
+;-------------------------------------------------------------------------------
+Delay_Long
+    push R15     ; save R15 since we use it here
+DelayTopL
+    mov #LONG_DELAY, R15     ;load loop counter (R15) with Long Delay constant
+Loop1Long
+    dec R15                     ; decrement loop counter
+    jnz Loop1Long               ; Zero yet?, no decrement again
+
+    pop R15     ; restore R15 before returning
+    ret         ; return
+;-------------------------------------------------------------------------------
+;  end of Delay_Long
+;-------------------------------------------------------------------------------
+         
+;-------------------------------------------------------------------------------
+;           End of all Subroutines
+;-------------------------------------------------------------------------------
+
+;-------------------------------------------------------------------------------
+;           Interrupt Vectors
+;-------------------------------------------------------------------------------
+
+            ORG     0xFFFE                  ; MSP430 RESET Vector
+            DW      RESET                   ; establishes the label RESET as 
+                                            ; the starting point
+            END                             ; END of all code for this program
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
